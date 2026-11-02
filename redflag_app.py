@@ -77,7 +77,7 @@ def _fetch(sym):
                 return {"tick": sym + suf, "price": float(h["Close"].iloc[-1]),
                         "asof": h.index[-1].date(), "q": getq(t), "nextres": nextres(t),
                         "ann": getann(t), "sector": getsector(t), "hist": gethist(t),
-                        "name": getname(t), "hold": getholders(t), "ype": getype(t)}
+                        "name": getname(t), "hold": getholders(t), "ype": getype(t), "atr": getatr(t)}
             except Exception as e:
                 if "rate" in str(e).lower() or "too many" in str(e).lower():
                     rl = True
@@ -137,7 +137,7 @@ def decide(rf_bad, qc, vs, hard=0):
         return "🔶 લાંબા ગાળા માટે નહીં", "ફક્ત trade (stop-loss સાથે) કે છોડો"
     if qc["bad"] == 0 and qc["pend"] == 0:
         if vs == "ok":
-            return "✅ લાંબા ગાળા માટે વિચારી શકાય", "3 હપ્તામાં ખરીદી, નિયમો પહેલાં લખી રાખો"
+            return "✅ લાંબા ગાળા માટે વિચારી શકાય", "ત્રણે તપાસ સારી છે. નીચે તમારી યોજના જુઓ (હપ્તા, stop-loss, target, નિયમો)"
         if vs == "bad":
             return "🟡 કંપની સારી, ભાવ મોંઘો", "યાદીમાં રાખો, ભાવ ઘટે કે નફો વધે ત્યારે ફરી જુઓ"
         return "🟡 કંપની સારી, ભાવ તપાસ અધૂરી", "ભાવ હાથે તપાસો"
@@ -439,6 +439,66 @@ def jsummary():
             + "\n\n*થોડા અઠવાડિયામાં આ સરેરાશ અર્થહીન છે (નાનો નમૂનો). મહિનાઓ પછી, વધુ તપાસ સાથે જ જુઓ.*")
 
 
+def getatr(t):
+    try:
+        h = t.history(period="3mo")
+        pc = h["Close"].shift(1)
+        tr = pd.concat([h["High"] - h["Low"], (h["High"] - pc).abs(), (h["Low"] - pc).abs()], axis=1).max(axis=1)
+        return float(tr.tail(14).mean())
+    except Exception:
+        return None
+
+
+def getnifty():
+    try:
+        return round(float(yf.Ticker("^NSEI").history(period="5d")["Close"].iloc[-1]), 2)
+    except Exception:
+        return ""
+
+
+def plan(d, title, pn, pm):
+    p, atr, k = d["price"], d.get("atr"), title[0]
+    fair = (p / pn) * pm if (pn and pm) else None
+    buyb = fair * 1.2 if fair else None
+    L, stop, tgt = [], None, None
+    if k == "✅":
+        stop = p * 0.80
+        tgt = fair * 1.3 if fair else None
+        L = [f"**ખરીદી માટે યોગ્ય ભાવ:** ₹{buyb:,.0f} સુધી (હાલ ₹{p:,.0f})" if buyb else "",
+             f"**Stop-loss:** ₹{stop:,.0f} (ખરીદ ભાવથી 20% નીચે). આ ભાવે બંધ આવે તો કારણ તપાસો, ધંધો બગડ્યો હોય તો વેચો.",
+             f"**Target:** ₹{tgt:,.0f} (વાજબી ભાવ ₹{fair:,.0f} થી 30% ઉપર). અહીં આવે તો અડધું વેચી નફો બુક કરવા વિચારો." if tgt else "",
+             "**3 હપ્તા, સાદી ભાષામાં:** ધારો કે આ શેરમાં કુલ ₹30,000 રોકવા છે. એક સાથે નહીં, ત્રણ વારમાં ₹10,000 ના ભાગ:\n"
+             "- **હપ્તો 1:** હમણાં, કુલ રકમનો 1/3.\n"
+             "- **હપ્તો 2:** 4-6 અઠવાડિયા પછી, બીજો 1/3, પણ ફરી તપાસ કરતાં ✅ આવે તો જ.\n"
+             "- **હપ્તો 3:** ફરી 4-6 અઠવાડિયા પછી, છેલ્લો 1/3, ✅ આવે તો જ.\n"
+             "વચ્ચે ⛔ આવે તો આગળના હપ્તા રોકી દો.",
+             "**નિયમો (ખરીદતા પહેલાં Notes માં લખી લો, પછી બદલવા નહીં):**\n"
+             "1. ત્રણે તપાસ (કંપની, ભાવ, ચેતવણી) ✅ હોય તો જ ખરીદો.\n"
+             "2. ત્રણ હપ્તામાં ખરીદો.\n"
+             "3. એક શેરમાં આ ભાગની કુલ રકમના 10% થી વધુ નહીં.\n"
+             "4. વેચાણ ફક્ત Stop, Target કે ધંધો બગડે ત્યારે. ભાવ જોઈને મન બદલવું નહીં."]
+    elif k == "🔶" and atr:
+        stop, tgt = p - 2 * atr, p + 4 * atr
+        L = [f"**ફક્ત trade કરવો હોય તો:** Stop-loss ₹{stop:,.0f} (રોજની સરેરાશ ચાલના 2 ગણા નીચે), Target ₹{tgt:,.0f} (4 ગણા ઉપર, જોખમ:નફો = 1:2). Stop તૂટે તો તરત નીકળો, લાંબા ગાળા માટે પકડી રાખવું નહીં."]
+    elif k == "🟡" and buyb and "મોંઘો" in title:
+        L = [f"**ખરીદવા જેવો ભાવ:** ₹{buyb:,.0f} સુધી આવે ત્યારે ફરી તપાસો (હાલ ₹{p:,.0f})."]
+    elif k == "⛔" and buyb:
+        L = [f"**હમણાં ખરીદી નહીં.** ચેતવણીઓ દૂર થાય પછી ફરી તપાસો. ત્યારે બધું સારું હોય તો ખરીદવા જેવો ભાવ ₹{buyb:,.0f} સુધી."]
+    return [x for x in L if x], stop, tgt, buyb
+
+
+def sheet_log(row):
+    try:
+        url, key = st.secrets["SHEET_URL"], st.secrets["SHEET_KEY"]
+    except Exception:
+        return None
+    try:
+        r = requests.post(url, json={"key": key, "row": row}, timeout=25)
+        return r.text.strip().startswith("ok")
+    except Exception:
+        return False
+
+
 def analyze(sym, th=2):
     d = fetch(sym)
     if not d:
@@ -476,9 +536,13 @@ def analyze(sym, th=2):
     q_ = urllib.parse.quote(sy)
     links = f"[Yahoo](https://finance.yahoo.com/quote/{d['tick']}) · [Screener](https://www.screener.in/company/{q_}/) · [NSE](https://www.nseindia.com/get-quotes/equity?symbol={q_})"
     jwrite(d, title, c, qv, vs)
+    pl, stop, tgt, buyb = plan(d, title, pn, pm)
+    rd = lambda v: round(v, 2) if v else ""
+    sh = sheet_log([dt.datetime.now().strftime("%Y-%m-%d %H:%M"), sy, round(d["price"], 2), title, c["bad"] + c["warn"], qv,
+                    {"ok": "વાજબી", "bad": "મોંઘો", "pend": "અધૂરું"}[vs], round(pn, 1) if pn else "", rd(stop), rd(tgt), rd(buyb), getnifty()])
     note = f"{dt.date.today():%d-%m-%Y} | {sy} | ₹{d['price']:.2f} | {title}" + (f" | PE {pn:.1f}" if pn else "")
     return {"tick": d["tick"], "price": d["price"], "asof": d["asof"], "title": title, "why": why, "co": co, "pr": pr, "ws": ws,
-            "prev": pv, "note": note, "flags": [f"{ICON[k]} {t}" for k, t in f], "table": table(d["q"]),
+            "prev": pv, "note": note, "plan": pl, "sheet": sh, "flags": [f"{ICON[k]} {t}" for k, t in f], "table": table(d["q"]),
             "quality": [f"{ICON[k]} {t}" for k, t in qf], "val": vl, "extras": ex, "links": links}
 
 
@@ -502,6 +566,10 @@ elif a:
     st.caption(f"ભાવની તારીખ: {a['asof']}")
     {"✅": st.success, "⛔": st.error}.get(a["title"][0], st.warning)(f"**{a['title']}**\n\n{a['why']}")
     st.markdown(f"**કંપની કેવી છે?** {a['co']}\n\n**ભાવ કેવો છે?** {a['pr']}\n\n**હમણાં ચેતવણી?** {a['ws']}")
+    if a["plan"]:
+        st.markdown("### તમારી યોજના")
+        st.markdown("\n\n".join(a["plan"]))
+    st.caption("✅ Google Sheet માં સચવાયું" if a["sheet"] else ("⚠️ Google Sheet માં સચવાયું નથી (સેટઅપ કે જોડાણ તપાસો)" if a["sheet"] is False else "ℹ️ Google Sheet જોડેલી નથી, નોંધ ફક્ત અહીં"))
     if a["prev"]:
         st.markdown("**પહેલાંની તપાસ:**\n" + "\n".join(a["prev"]))
     st.caption("આ લીટી કૉપિ કરી WhatsApp કે Notes માં સાચવી રાખો (ખૂણે કૉપિ બટન):")
